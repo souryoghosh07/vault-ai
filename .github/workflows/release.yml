@@ -1,0 +1,76 @@
+name: 'Publish Vault AI'
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers the build ONLY when you push a version tag (e.g., v1.0.0)
+
+jobs:
+  publish-tauri:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            sidecar-api: 'vault-api-aarch64-apple-darwin'
+            tauri-target: 'aarch64-apple-darwin'
+          - platform: 'windows-latest'
+            sidecar-api: 'vault-api-x86_64-pc-windows-msvc.exe'
+            tauri-target: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.tauri-target }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Frontend Dependencies
+        run: npm install
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build Python Sidecar
+        run: pyinstaller --onefile --paths src-python run_api.py --name vault-api
+
+      - name: Stage Python Sidecar (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          mkdir -p src-tauri/bin
+          move dist\vault-api.exe src-tauri\bin\${{ matrix.sidecar-api }}
+
+      - name: Stage Python Sidecar (Mac)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          mkdir -p src-tauri/bin
+          mv dist/vault-api src-tauri/bin/${{ matrix.sidecar-api }}
+
+      - name: Build and Publish Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__ 
+          releaseName: 'Vault AI v__VERSION__'
+          releaseBody: 'Automated release of Vault AI.'
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.platform == 'macos-latest' && '--target aarch64-apple-darwin' || '' }}
