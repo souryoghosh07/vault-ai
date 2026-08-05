@@ -51,12 +51,12 @@ jobs:
       - name: Download Hugging Face Model for Air-Gap
         env:
           HF_HOME: ${{ github.workspace }}/src-python/hf_cache
-        run: huggingface-cli download docling-project/docling-layout-heron    
+        run: hf download docling-project/docling-layout-heron    
 
       - name: Download Hugging Face Model for Air-Gap
         env:
           HF_HOME: ${{ github.workspace }}/src-python/hf_cache
-        run: huggingface-cli download docling-project/docling-layout-heron
+        run: hf download docling-project/docling-layout-heron
 
       - name: Build Python Sidecar (Windows)
         if: matrix.platform == 'windows-latest'
