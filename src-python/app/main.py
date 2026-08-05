@@ -1,3 +1,13 @@
+import os
+import sys
+
+# Tell the Hugging Face hub to operate completely offline
+os.environ["HF_HUB_OFFLINE"] = "1"
+
+# If running as a compiled PyInstaller executable, reroute the cache to the internal temp folder
+if getattr(sys, 'frozen', False):
+    os.environ["HF_HOME"] = os.path.join(sys._MEIPASS, "hf_cache")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.ma_router import router as ma_router

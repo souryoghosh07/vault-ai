@@ -46,10 +46,25 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r src-python/requirements.txt
 
-      - name: Build Python Sidecar
-        run: pyinstaller --onefile --paths src-python run_api.py --name vault-api
+      - name: Download Hugging Face Model for Air-Gap
+        env:
+          HF_HOME: ${{ github.workspace }}/src-python/hf_cache
+        run: huggingface-cli download docling-project/docling-layout-heron    
+
+      - name: Download Hugging Face Model for Air-Gap
+        env:
+          HF_HOME: ${{ github.workspace }}/src-python/hf_cache
+        run: huggingface-cli download docling-project/docling-layout-heron
+
+      - name: Build Python Sidecar (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: pyinstaller --onefile --paths src-python --add-data "src-python/hf_cache;hf_cache" run_api.py --name vault-api
+
+      - name: Build Python Sidecar (Mac)
+        if: matrix.platform == 'macos-latest'
+        run: pyinstaller --onefile --paths src-python --add-data "src-python/hf_cache:hf_cache" run_api.py --name vault-api
 
       - name: Stage Python Sidecar (Windows)
         if: matrix.platform == 'windows-latest'
@@ -62,7 +77,6 @@ jobs:
         run: |
           mkdir -p src-tauri/bin
           mv dist/vault-api src-tauri/bin/${{ matrix.sidecar-api }}
-
       - name: Build and Publish Tauri App
         uses: tauri-apps/tauri-action@v0
         env:

@@ -11,3 +11,7 @@ class MARedFlagReport(BaseModel):
     filename: str
     report_markdown: str
     findings: Optional[List[RiskFinding]] = []
+
+class PitchDeckReport(BaseModel):
+    filename: str
+    report_markdown: str    

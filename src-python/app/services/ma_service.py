@@ -1,62 +1,59 @@
-import fitz  # PyMuPDF
 import httpx
 import asyncio
-import re
-import pytesseract
-from PIL import Image
-from app.prompts.ma_prompts import MA_SYSTEM_PROMPT
+import io
 
-# Point directly to your Windows Tesseract installation
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Docling Imports
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.base_models import InputFormat, DocumentStream
+from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 CHUNK_SIZE = 12
 OVERLAP = 1
 
-DEFAULT_CLEAN_REPORT = """# M&A TARGET AUDIT: RED FLAG REPORT
-
-## CONTRACT & LEGAL RISKS
-* **Change of Control:** Not found in document | **Citation:** Not found in document
-* **Termination & Notice:** Not found in document | **Citation:** Not found in document
-* **Assignability Restrictions:** Not found in document | **Citation:** Not found in document
-
-## CIM NARRATIVE RISKS
-* **Customer Concentration:** Not found in document | **Citation:** Not found in document
-* **Management Turnover:** Not found in document | **Citation:** Not found in document
-* **Regulatory/Compliance Liabilities:** Not found in document | **Citation:** Not found in document"""
-
-def clean_ocr_text(text: str) -> str:
-    """Sanitizes raw OCR output to improve LLM comprehension."""
-    # Rejoin words split across line breaks (e.g., "Agre-\ne-ment" -> "Agreement")
-    text = re.sub(r'(\w+)-\n(\w+)', r'\1\2', text)
-    # Replace multiple spaces or tabs with a single space
-    text = re.sub(r'[ \t]+', ' ', text)
-    # Collapse 3 or more consecutive newlines into double newlines
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-
-def get_page_chunks(pdf_bytes: bytes) -> list:
-    """Extracts text, falling back to OCR for scanned images with text sanitization."""
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    pages = []
+def get_page_chunks(pdf_bytes: bytes, filename: str) -> list:
+    """Extracts text and tables using Docling, forcing RapidOCR for scanned images."""
+    print("Initializing air-gapped Docling engine...")
     
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        text = page.get_text("text").strip()
-        
-        # FALLBACK: If text layer is missing/short, execute OCR
-        if len(text) < 50:
-            print(f"Page {page_num + 1} appears to be a scan. Running OCR...")
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            text = pytesseract.image_to_string(img).strip()
-        
-        # Clean up any OCR noise before passing to the chunker
-        text = clean_ocr_text(text)
-        
-        if len(text) > 50:
-            pages.append({"page": page_num + 1, "content": text})
+    # 1. Force Docling to use RapidOCR (bypassing the host system completely)
+    pipeline_options = PdfPipelineOptions()
+    pipeline_options.do_ocr = True 
+    pipeline_options.ocr_options = RapidOcrOptions() 
 
+    converter = DocumentConverter(
+        allowed_formats=[InputFormat.PDF],
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+        }
+    )
+
+    print(f"Parsing {filename} with Docling (OCR enabled)...")
+    
+    # 2. Convert raw bytes stream into a DoclingDocument
+    stream = DocumentStream(name=filename, stream=io.BytesIO(pdf_bytes))
+    result = converter.convert(stream)
+    
+    # 3. Iterate through all document elements and group them by page number
+    pages_content = {}
+    for item, _ in result.document.iterate_items():
+        if not item.prov:
+            continue
+            
+        page_no = item.prov[0].page_no
+        if page_no not in pages_content:
+            pages_content[page_no] = ""
+        
+        # Export tables nicely formatted, fallback to raw text for paragraphs
+        try:
+            pages_content[page_no] += item.export_to_markdown(result.document) + "\n\n"
+        except AttributeError:
+            if hasattr(item, "text"):
+                pages_content[page_no] += item.text + "\n\n"
+                
+    # 4. Format into the page dictionary array your chunker expects
+    pages = [{"page": p, "content": text.strip()} for p, text in sorted(pages_content.items())]
+
+    # 5. Execute your strict Chunking & Overlap map logic
     chunks = []
     for i in range(0, len(pages), max(1, CHUNK_SIZE - OVERLAP)):
         chunk_pages = pages[i:i + CHUNK_SIZE]
@@ -70,13 +67,19 @@ def get_page_chunks(pdf_bytes: bytes) -> list:
             
     return chunks
 
-async def analyze_chunk(client: httpx.AsyncClient, chunk_text: str, filename: str, model_name: str) -> str:
+async def analyze_chunk(
+    client: httpx.AsyncClient, 
+    chunk_text: str, 
+    filename: str, 
+    model_name: str, 
+    system_prompt: str
+) -> str:
     """Runs the strict extraction prompt against a single chunk with infinite-loop guardrails."""
-    user_prompt = f"DOCUMENT FILENAME: {filename}\n\nINGESTED TEXT WITH PAGE MARKERS:\n---\n{chunk_text}\n---\n\nPerform the M&A Red Flag Audit now."
+    user_prompt = f"DOCUMENT FILENAME: {filename}\n\nINGESTED TEXT WITH PAGE MARKERS:\n---\n{chunk_text}\n---\n\nPerform the audit now."
     
     payload = {
         "model": model_name,
-        "system": MA_SYSTEM_PROMPT,
+        "system": system_prompt,
         "prompt": user_prompt,
         "stream": False,
         "options": {
@@ -97,13 +100,22 @@ async def analyze_chunk(client: httpx.AsyncClient, chunk_text: str, filename: st
     except httpx.TimeoutException:
         return "[ERROR]: Chunk processing timed out. Skipping."
 
-async def process_ma_document(file_bytes: bytes, filename: str, model_name: str = "granite4.1:8b") -> str:
+async def process_document(
+    file_bytes: bytes, 
+    filename: str, 
+    system_prompt: str,
+    synthesis_rules: str,
+    default_report: str,
+    model_name: str = "granite4.1:8b"
+) -> str:
     """The Map-Reduce pipeline: Chunks text, extracts sequentially, and synthesizes the final report."""
-    chunks = get_page_chunks(file_bytes)
+    
+    # Pass filename down to the Docling processor
+    chunks = get_page_chunks(file_bytes, filename)
     
     if not chunks:
         print("Document resulted in 0 readable chunks. Returning clean report.")
-        return DEFAULT_CLEAN_REPORT
+        return default_report
 
     raw_findings = []
 
@@ -111,7 +123,7 @@ async def process_ma_document(file_bytes: bytes, filename: str, model_name: str 
         # MAP PHASE: Process sequentially
         for idx, chunk in enumerate(chunks):
             print(f"Engine Processing Chunk {idx+1} of {len(chunks)}...")
-            finding = await analyze_chunk(client, chunk, filename, model_name)
+            finding = await analyze_chunk(client, chunk, filename, model_name, system_prompt)
             raw_findings.append(finding)
 
         # REDUCE PHASE: Synthesize raw findings into master report
@@ -120,11 +132,7 @@ async def process_ma_document(file_bytes: bytes, filename: str, model_name: str 
         Compile the provided raw findings into a SINGLE master report using the EXACT Markdown format required.
         
         SYNTHESIS RULES:
-        1. If a category has a specific risk identified in ANY chunk, include it and drop the "Not found" entry.
-        2. Combine duplicate findings into a single bullet point.
-        3. If a category has no findings across ALL chunks, output EXACTLY: `* **[Category Name]:** Not found in document | **Citation:** Not found`
-        4. If a page number is missing from the raw text, cite the Section number only. Do NOT output placeholders like "Page Y" or "assuming page reference".
-        5. CRITICAL: Output ONLY the Markdown report. Do NOT output any introductory text, concluding remarks, or "Notes" of any kind.
+        {synthesis_rules}
 
         RAW FINDINGS TO SYNTHESIZE:
         {chr(10).join(raw_findings)}
@@ -132,7 +140,7 @@ async def process_ma_document(file_bytes: bytes, filename: str, model_name: str 
 
         payload = {
             "model": model_name,
-            "system": MA_SYSTEM_PROMPT,
+            "system": system_prompt,
             "prompt": synthesis_prompt,
             "stream": False,
             "options": {
@@ -146,7 +154,7 @@ async def process_ma_document(file_bytes: bytes, filename: str, model_name: str 
         try:
             response = await client.post(OLLAMA_URL, json=payload)
             response.raise_for_status()
-            final_report = response.json().get("response", DEFAULT_CLEAN_REPORT)
+            final_report = response.json().get("response", default_report)
             print(f"\n--- [DEBUG] FINAL SYNTHESIZED REPORT ---\n{final_report}\n-----------------------------------\n")
             return final_report
         except httpx.TimeoutException:

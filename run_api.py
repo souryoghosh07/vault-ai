@@ -1,6 +1,14 @@
 import os
 import sys
 import multiprocessing
+
+# Tell the Hugging Face hub to operate completely offline BEFORE anything else loads
+os.environ["HF_HUB_OFFLINE"] = "1"
+
+# If running as a compiled PyInstaller executable, reroute the cache to the internal temp folder
+if getattr(sys, 'frozen', False):
+    os.environ["HF_HOME"] = os.path.join(sys._MEIPASS, "hf_cache")
+
 import uvicorn
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'src-python')))

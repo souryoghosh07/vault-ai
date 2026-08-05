@@ -9,6 +9,7 @@ export default function App() {
   const [isReady, setIsReady] = useState<boolean>(false);
 
   // --- APP STATES ---
+  const [isPitchDeck, setIsPitchDeck] = useState<boolean>(false);
   const [file, setFile] = useState<File | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [report, setReport] = useState<string | null>(null);
@@ -84,7 +85,7 @@ export default function App() {
   const downloadReport = async () => {
     if (!report) return;
     try {
-      const suggestedName = `${file?.name.replace(/\.[^/.]+$/, "") || 'Audit'}_Red_Flag_Report.md`;
+      const suggestedName = `${file?.name.replace(/\.[^/.]+$/, "") || 'Audit'}_Report.md`;
       const filePath = await save({
         filters: [{ name: 'Markdown', extensions: ['md'] }],
         defaultPath: suggestedName,
@@ -108,12 +109,26 @@ export default function App() {
     if (isScanning) {
       setScanSteps(["[SYSTEM] Initializing air-gapped environment..."]);
       
+      const maSteps = [
+        "[SCAN] Cross-referencing Change of Control triggers...",
+        "[SCAN] Evaluating termination penalties & notice periods...",
+        "[SCAN] Synthesizing narrative risk factors (CIM)..."
+      ];
+
+      const pitchSteps = [
+        "[SCAN] Evaluating problem statement & market claims...",
+        "[SCAN] Auditing competitive moat & IP...",
+        "[SCAN] Extracting financials, GTM metrics & use of funds..."
+      ];
+
+      const dynamicSteps = isPitchDeck ? pitchSteps : maSteps;
+
       const timers = [
         setTimeout(() => setScanSteps(prev => [...prev, "[INGEST] Extracting raw text layers from PDF..."]), 1500),
         setTimeout(() => setScanSteps(prev => [...prev, "[ENGINE] Allocating local memory for model execution..."]), 3500),
-        setTimeout(() => setScanSteps(prev => [...prev, "[SCAN] Cross-referencing Change of Control triggers..."]), 6500),
-        setTimeout(() => setScanSteps(prev => [...prev, "[SCAN] Evaluating termination penalties & notice periods..."]), 11000),
-        setTimeout(() => setScanSteps(prev => [...prev, "[SCAN] Synthesizing narrative risk factors (CIM)..."]), 16000),
+        setTimeout(() => setScanSteps(prev => [...prev, dynamicSteps[0]]), 6500),
+        setTimeout(() => setScanSteps(prev => [...prev, dynamicSteps[1]]), 11000),
+        setTimeout(() => setScanSteps(prev => [...prev, dynamicSteps[2]]), 16000),
         setTimeout(() => setScanSteps(prev => [...prev, "[ENGINE] Awaiting final JSON payload from local model..."]), 22000),
       ];
 
@@ -121,7 +136,7 @@ export default function App() {
     } else {
       setScanSteps([]);
     }
-  }, [isScanning]);
+  }, [isScanning, isPitchDeck]);
 
   const runDeterministicScan = async () => {
     if (!file) {
@@ -136,8 +151,11 @@ export default function App() {
     const formData = new FormData();
     formData.append("file", file);
 
+    // Dynamically route to the correct FastAPI endpoint
+    const endpoint = isPitchDeck ? "/api/pitch/parse" : "/api/ma/parse";
+
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/ma/parse", {
+      const response = await fetch(`http://127.0.0.1:8000${endpoint}`, {
         method: "POST",
         body: formData,
       });
@@ -231,6 +249,25 @@ export default function App() {
 
           <div style={styles.panel}>
             <div style={styles.panelTitle}>Target Document</div>
+            
+            {/* DOCUMENT TYPE TOGGLE */}
+            <div style={styles.toggleContainer}>
+              <button 
+                style={!isPitchDeck ? styles.activeToggle : styles.inactiveToggle}
+                onClick={() => setIsPitchDeck(false)}
+                disabled={isScanning}
+              >
+                Legal M&A
+              </button>
+              <button 
+                style={isPitchDeck ? styles.activeToggle : styles.inactiveToggle}
+                onClick={() => setIsPitchDeck(true)}
+                disabled={isScanning}
+              >
+                Pitch Deck
+              </button>
+            </div>
+
             <input 
               type="file" 
               accept="application/pdf" 
@@ -261,14 +298,29 @@ export default function App() {
 
           <div style={styles.panel}>
             <div style={styles.panelTitle}>Active Scan Profile</div>
-            <div style={styles.profileText}>M&A Red Flag Extraction</div>
+            <div style={styles.profileText}>
+              {isPitchDeck ? "Investment Narrative Audit" : "M&A Red Flag Extraction"}
+            </div>
             <ul style={styles.profileList}>
-              <li>Change of Control</li>
-              <li>Termination & Notice</li>
-              <li>Assignability Restrictions</li>
-              <li>Customer Concentration</li>
-              <li>Management Turnover</li>
-              <li>Regulatory Liabilities</li>
+              {isPitchDeck ? (
+                <>
+                  <li>The Problem & Solution</li>
+                  <li>Competitive Moat & IP</li>
+                  <li>Go-to-Market & Traction</li>
+                  <li>Current Status & Financials</li>
+                  <li>Management Team Background</li>
+                  <li>Use of Funds</li>
+                </>
+              ) : (
+                <>
+                  <li>Change of Control</li>
+                  <li>Termination & Notice</li>
+                  <li>Assignability Restrictions</li>
+                  <li>Customer Concentration</li>
+                  <li>Management Turnover</li>
+                  <li>Regulatory Liabilities</li>
+                </>
+              )}
             </ul>
           </div>
         </div>
@@ -276,7 +328,9 @@ export default function App() {
         {/* RIGHT MAIN AREA: Report */}
         <div id="report-container" style={styles.mainArea}>
           <div className="no-print" style={styles.reportHeader}>
-            <div style={styles.reportTitle}>Red Flag Audit Report</div>
+            <div style={styles.reportTitle}>
+              {isPitchDeck ? "Investment Narrative Audit" : "Red Flag Audit Report"}
+            </div>
             {report && (
               <div style={styles.buttonGroup}>
                 <button style={styles.downloadButton} onClick={downloadReport}>
@@ -294,7 +348,7 @@ export default function App() {
               <div className="no-print" style={styles.placeholderState}>
                 <div style={styles.placeholderIcon}>📄</div>
                 <div style={styles.placeholderTitle}>Ready for Analysis</div>
-                <div style={styles.placeholderSub}>Upload a document and run the analysis to generate a red flag report.</div>
+                <div style={styles.placeholderSub}>Upload a document and run the analysis to generate a report.</div>
               </div>
             )}
             
@@ -358,11 +412,17 @@ const styles: { [key: string]: React.CSSProperties } = {
   progressBar: { height: '100%', backgroundColor: '#059669', transition: 'width 0.3s ease' },
   panel: { backgroundColor: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' },
   panelTitle: { fontSize: '0.875rem', fontWeight: 600, color: '#111827', borderBottom: '1px solid #F3F4F6', paddingBottom: '8px' },
+  
+  // NEW TOGGLE STYLES
+  toggleContainer: { display: 'flex', backgroundColor: '#F3F4F6', borderRadius: '6px', padding: '4px', gap: '4px' },
+  activeToggle: { flex: 1, backgroundColor: '#FFFFFF', color: '#111827', border: 'none', borderRadius: '4px', padding: '6px 0', fontSize: '0.8rem', fontWeight: 600, boxShadow: '0 1px 2px rgba(0,0,0,0.1)', cursor: 'default' },
+  inactiveToggle: { flex: 1, backgroundColor: 'transparent', color: '#6B7280', border: 'none', borderRadius: '4px', padding: '6px 0', fontSize: '0.8rem', fontWeight: 500, cursor: 'pointer', transition: 'color 0.2s' },
+  
   uploadButton: { backgroundColor: '#FFFFFF', color: '#374151', border: '1px dashed #D1D5DB', padding: '12px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, fontSize: '0.875rem', borderRadius: '6px' },
   fileStatus: { fontSize: '0.8rem', color: '#6B7280', backgroundColor: '#F9FAFB', padding: '8px', borderRadius: '4px', border: '1px solid #F3F4F6' },
   fileName: { fontFamily: '"SFMono-Regular", Consolas, monospace', color: '#111827', fontWeight: 500 },
   scanButton: { backgroundColor: '#0F172A', color: '#FFFFFF', border: 'none', padding: '10px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, fontSize: '0.875rem', borderRadius: '6px', marginTop: '4px' },
-  profileText: { fontSize: '0.85rem', fontWeight: 500, color: '#4B5563' },
+  profileText: { fontSize: '0.85rem', fontWeight: 600, color: '#111827' },
   profileList: { margin: 0, paddingLeft: '16px', fontSize: '0.8rem', color: '#6B7280', lineHeight: '1.6' },
   reportHeader: { backgroundColor: '#F9FAFB', borderBottom: '1px solid #E5E7EB', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   reportTitle: { fontSize: '1rem', fontWeight: 600, color: '#111827' },
