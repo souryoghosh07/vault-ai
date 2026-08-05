@@ -61,11 +61,11 @@ jobs:
 
       - name: Build Python Sidecar (Windows)
         if: matrix.platform == 'windows-latest'
-        run: python -m pyinstaller --onefile --paths src-python --add-data "src-python/hf_cache;hf_cache" run_api.py --name vault-api
+        run: python -m PyInstaller --onefile --paths src-python --add-data "src-python/hf_cache;hf_cache" run_api.py --name vault-api
 
       - name: Build Python Sidecar (Mac)
         if: matrix.platform == 'macos-latest'
-        run: pyinstaller --onefile --paths src-python --add-data "src-python/hf_cache:hf_cache" run_api.py --name vault-api
+        run: python -m PyInstaller --onefile --paths src-python --add-data "src-python/hf_cache:hf_cache" run_api.py --name vault-api
 
       - name: Stage Python Sidecar (Windows)
         if: matrix.platform == 'windows-latest'
