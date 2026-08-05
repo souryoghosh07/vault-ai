@@ -26,5 +26,12 @@ dist-ssr
 # Local Sidecar Builds
 build/
 dist/
-src-tauri/bin/vault-api.spec
 .vscode/
+
+# Python caches and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller files
+*.spec
