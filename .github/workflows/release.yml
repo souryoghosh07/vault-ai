@@ -70,14 +70,15 @@ jobs:
       - name: Stage Python Sidecar (Windows)
         if: matrix.platform == 'windows-latest'
         run: |
-          mkdir -p src-tauri/bin
-          move dist\vault-api.exe src-tauri\bin\${{ matrix.sidecar-api }}
-
+          New-Item -ItemType Directory -Force -Path src-tauri\bin
+          Move-Item -Path dist\vault-api.exe -Destination src-tauri\bin\${{ matrix.sidecar-api }} -Force
+     
       - name: Stage Python Sidecar (Mac)
         if: matrix.platform == 'macos-latest'
         run: |
           mkdir -p src-tauri/bin
           mv dist/vault-api src-tauri/bin/${{ matrix.sidecar-api }}
+          
       - name: Build and Publish Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
