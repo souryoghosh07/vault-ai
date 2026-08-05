@@ -47,6 +47,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pyinstaller
 
       - name: Download Hugging Face Model for Air-Gap
         env:
@@ -60,7 +61,7 @@ jobs:
 
       - name: Build Python Sidecar (Windows)
         if: matrix.platform == 'windows-latest'
-        run: pyinstaller --onefile --paths src-python --add-data "src-python/hf_cache;hf_cache" run_api.py --name vault-api
+        run: python -m pyinstaller --onefile --paths src-python --add-data "src-python/hf_cache;hf_cache" run_api.py --name vault-api
 
       - name: Build Python Sidecar (Mac)
         if: matrix.platform == 'macos-latest'
