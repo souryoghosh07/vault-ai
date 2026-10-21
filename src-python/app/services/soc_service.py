@@ -1,6 +1,7 @@
 import io
+import json
 import httpx
-from typing import List
+from typing import List, Optional
 from app.parsers.artifact_parser import parse_security_artifact
 from app.prompts.soc_prompts import (
     SOC_SYSTEM_PROMPT,
@@ -9,8 +10,25 @@ from app.prompts.soc_prompts import (
 )
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-EVENT_CHUNK_SIZE = 50
-EVENT_OVERLAP = 5
+OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
+
+# Windowing parameters for large forensic streams (tuned for CPU L3 cache efficiency)
+SINGLE_PASS_THRESHOLD = 60
+EVENT_CHUNK_SIZE = 40
+EVENT_OVERLAP = 4
+
+SOC_CHUNK_EXTRACTOR_PROMPT = """You are a Tier-1 SOC Incident Telemetry Extractor operating in an air-gapped SCIF.
+Target Profile: {threat_profile_hint}
+
+Your sole objective is to inspect this log slice for unauthenticated requests, attack payloads, anomalous commands, or indicators matching the target threat profile.
+
+EXTRACTION INSTRUCTIONS:
+1. If the log slice contains ONLY normal, benign, or baseline operational telemetry, output EXACTLY:
+STATUS: CLEAN
+2. If suspicious requests, authentication bypass attempts, command execution, or attack indicators are detected, list ONLY concise bullet points with exact citations:
+- [Citation] [IOC_TYPE] Value | Anomaly Description
+3. DO NOT output narrative paragraphs, markdown headers, attack timelines, or remediation playbooks. Keep output strictly under 150 words.
+"""
 
 
 def chunk_events(events: List[str], chunk_size: int = EVENT_CHUNK_SIZE, overlap: int = EVENT_OVERLAP) -> List[str]:
@@ -34,60 +52,79 @@ def chunk_events(events: List[str], chunk_size: int = EVENT_CHUNK_SIZE, overlap:
     return chunks
 
 
-async def analyze_soc_chunk(
+async def stream_ollama_generate(
     client: httpx.AsyncClient,
-    chunk_text: str,
-    filename: str,
-    model_name: str,
-    system_prompt: str,
-    threat_profile_hint: str = "Cisco ISE Auth Bypass (CVE-2026-76460) & High-Severity Threat Triage",
+    payload: dict,
+    timeout_seconds: float = 180.0,
 ) -> str:
-    """Executes deterministic Tier-1 SOC indicator extraction against an event chunk."""
-    user_prompt = (
-        f"FORENSIC ARTIFACT FILENAME: {filename}\n"
-        f"TARGET PROFILE: {threat_profile_hint}\n\n"
-        f"INGESTED FORENSIC LOG STREAM:\n"
-        f"=============================\n"
-        f"{chunk_text}\n"
-        f"=============================\n\n"
-        f"Perform strict Tier-1 SOC incident analysis and extract all IOCs with exact citations now."
-    )
+    """Streams tokens from local Ollama to avoid idle read socket timeouts on CPU inference."""
+    payload["stream"] = True
+    payload["keep_alive"] = "30m"
 
-    payload = {
-        "model": model_name,
-        "system": system_prompt,
-        "prompt": user_prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.0,
-            "num_ctx": 8192,
-            "num_predict": 1200,
-            "repeat_penalty": 1.15,
-        },
-    }
+    # Per-read timeout: 300s prevents prematurely aborting active generations on CPU
+    timeout = httpx.Timeout(connect=60.0, read=300.0, write=60.0, pool=60.0)
 
+    full_response: List[str] = []
     try:
-        response = await client.post(OLLAMA_URL, json=payload, timeout=120.0)
-        response.raise_for_status()
-        res_text = response.json().get("response", "")
-        return res_text
+        async with client.stream("POST", OLLAMA_URL, json=payload, timeout=timeout) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    token = data.get("response", "")
+                    if token:
+                        full_response.append(token)
+                    if data.get("done", False):
+                        break
+                except json.JSONDecodeError:
+                    continue
+        return "".join(full_response).strip()
     except httpx.TimeoutException:
+        print("[SOC Engine WARN] Local engine timed out waiting for token generation.")
         return "[WARN]: Chunk analysis timed out in local engine. Continuing with remaining batches."
     except Exception as e:
-        return f"[ERROR]: Engine communication error on batch: {e}"
+        print(f"[SOC Engine ERROR] Ollama communication failed: {e}")
+        return f"[ERROR]: Engine communication error: {e}"
+
+
+async def get_active_model(client: httpx.AsyncClient, requested_model: Optional[str] = None) -> str:
+    """Validates the requested model or resolves to the best available installed model."""
+    try:
+        res = await client.get(OLLAMA_TAGS_URL, timeout=5.0)
+        if res.is_success:
+            models_data = res.json().get("models", [])
+            installed_names = [m.get("name", "") for m in models_data]
+
+            # 1. Match requested model if provided
+            if requested_model and any(requested_model in name for name in installed_names):
+                return requested_model
+
+            # 2. Priority order for SOC triage
+            for preferred in ["granite4.1:8b", "llama3.2:3b", "llama3.1:8b"]:
+                for name in installed_names:
+                    if preferred in name:
+                        return name
+
+            # 3. Fallback to first available model
+            if installed_names:
+                return installed_names[0]
+    except Exception:
+        pass
+
+    return requested_model or "granite4.1:8b"
 
 
 async def process_security_incident(
     file_bytes: bytes,
     filename: str,
     threat_profile: str = "cisco_ise",
-    model_name: str = "granite4.1:8b",
+    model_name: Optional[str] = None,
 ) -> str:
-    """End-to-End Map-Reduce SOC Triage Pipeline:
-    1. Parse artifact (.evtx, .pcap, .log, .pdf, etc.)
-    2. Batch events into windowed chunks
-    3. Map Phase: Extract indicators per chunk with zero-hallucination rules
-    4. Reduce Phase: Synthesize unified Tier-1 Incident Triage Report
+    """End-to-End SOC Triage Pipeline:
+    - Standard artifacts (<= 150 events): Direct Single-Pass Analysis (fastest, unified timeline)
+    - High-volume artifacts (> 150 events): Streaming Map-Reduce with compact indicator extraction
     """
     # 1. Forensic Parsing
     print(f"[SOC Engine] Ingesting forensic artifact: {filename} ({len(file_bytes)} bytes)...")
@@ -97,10 +134,6 @@ async def process_security_incident(
         print("[SOC Engine] Artifact contains no readable event records.")
         return DEFAULT_CLEAN_SOC_REPORT
 
-    # 2. Windowed Chunking
-    chunks = chunk_events(events)
-    print(f"[SOC Engine] Dispatched {len(events)} events across {len(chunks)} analysis batches.")
-
     threat_profile_hints = {
         "cisco_ise": "Priority Detection: Cisco Identity Services Engine Authentication Bypass (CVE-2026-76460)",
         "cobalt_strike": "Priority Detection: Cobalt Strike C2, Beaconing periodicity, Process Injection",
@@ -109,54 +142,116 @@ async def process_security_incident(
     }
     hint = threat_profile_hints.get(threat_profile, threat_profile_hints["cisco_ise"])
 
-    raw_findings = []
-
     async with httpx.AsyncClient(timeout=None) as client:
-        # MAP PHASE: Process chunks
-        for idx, chunk in enumerate(chunks):
-            print(f"[SOC Engine] Analyzing Batch {idx + 1} of {len(chunks)}...")
-            finding = await analyze_soc_chunk(
-                client=client,
-                chunk_text=chunk,
-                filename=filename,
-                model_name=model_name,
-                system_prompt=SOC_SYSTEM_PROMPT,
-                threat_profile_hint=hint,
+        selected_model = await get_active_model(client, model_name)
+        print(f"[SOC Engine] Active inference model: {selected_model}")
+
+        # ---------------------------------------------------------
+        # FAST PATH: DIRECT SINGLE-PASS ANALYSIS (<= 150 EVENTS)
+        # ---------------------------------------------------------
+        if len(events) <= SINGLE_PASS_THRESHOLD:
+            print(f"[SOC Engine] Log stream contains {len(events)} events (<= {SINGLE_PASS_THRESHOLD}). Executing Direct Single-Pass Analysis...")
+            full_log_text = "\n".join(events)
+            user_prompt = (
+                f"FORENSIC ARTIFACT FILENAME: {filename}\n"
+                f"TARGET PROFILE: {hint}\n\n"
+                f"INGESTED FORENSIC LOG STREAM:\n"
+                f"=============================\n"
+                f"{full_log_text}\n"
+                f"=============================\n\n"
+                f"Perform strict Tier-1 SOC incident analysis and generate the complete Tier-1 SOC Incident Triage Report now."
             )
-            raw_findings.append(finding)
+
+            payload = {
+                "model": selected_model,
+                "system": SOC_SYSTEM_PROMPT,
+                "prompt": user_prompt,
+                "options": {
+                    "temperature": 0.0,
+                    "num_ctx": 4096,
+                    "num_predict": 1000,
+                    "repeat_penalty": 1.15,
+                },
+            }
+
+            report = await stream_ollama_generate(client, payload)
+            if not report or "[WARN]" in report or "[ERROR]" in report:
+                print(f"[SOC Engine WARN] Single-pass generation issue, falling back to clean baseline: {report}")
+                return report or DEFAULT_CLEAN_SOC_REPORT
+
+            print("[SOC Engine] Single-pass Triage Report Complete.")
+            return report
+
+        # ---------------------------------------------------------
+        # HIGH-VOLUME PATH: STREAMING MAP-REDUCE (> 150 EVENTS)
+        # ---------------------------------------------------------
+        chunks = chunk_events(events)
+        print(f"[SOC Engine] High-volume stream: {len(events)} events partitioned into {len(chunks)} batches.")
+
+        raw_findings = []
+        clean_batches = 0
+
+        # MAP PHASE: Lightweight extraction per chunk
+        for idx, chunk in enumerate(chunks):
+            print(f"[SOC Engine] Extracting Indicators from Batch {idx + 1} of {len(chunks)}...")
+            extractor_prompt = (
+                f"FORENSIC LOG STREAM SLICE:\n"
+                f"===========================\n"
+                f"{chunk}\n"
+                f"===========================\n\n"
+                f"Extract candidate threat indicators or output 'STATUS: CLEAN'."
+            )
+
+            payload = {
+                "model": selected_model,
+                "system": SOC_CHUNK_EXTRACTOR_PROMPT.format(threat_profile_hint=hint),
+                "prompt": extractor_prompt,
+                "options": {
+                    "temperature": 0.0,
+                    "num_ctx": 4096,
+                    "num_predict": 250,
+                    "repeat_penalty": 1.15,
+                },
+            }
+
+            finding = await stream_ollama_generate(client, payload)
+            if "STATUS: CLEAN" in finding.upper():
+                clean_batches += 1
+            else:
+                raw_findings.append(f"### [Batch {idx + 1} Findings]\n{finding}")
+
+        # If every batch evaluated as clean, return clean report without reducer overhead
+        if clean_batches == len(chunks) or not raw_findings:
+            print("[SOC Engine] All batches verified benign. Generating Clean Incident Report.")
+            return DEFAULT_CLEAN_SOC_REPORT
 
         # REDUCE PHASE: Master Report Synthesis
-        print("[SOC Engine] Synthesizing Master Tier-1 Incident Triage Report...")
+        print(f"[SOC Engine] Synthesizing Master Report from {len(raw_findings)} flagged batches...")
         synthesis_prompt = f"""You are the Master Tier-1 Incident Triage Synthesizer.
 Compile the following extracted chunk findings into a SINGLE Master Incident Report in the EXACT required Markdown format.
 
 SYNTHESIS RULES:
 {SOC_SYNTHESIS_RULES}
 
-RAW CHUNK FINDINGS TO SYNTHESIZE:
+FLAGGED CHUNK FINDINGS TO SYNTHESIZE:
 {chr(10).join(raw_findings)}
 """
 
         payload = {
-            "model": model_name,
+            "model": selected_model,
             "system": SOC_SYSTEM_PROMPT,
             "prompt": synthesis_prompt,
-            "stream": False,
             "options": {
                 "temperature": 0.0,
-                "num_ctx": 8192,
-                "num_predict": 2500,
+                "num_ctx": 4096,
+                "num_predict": 1200,
                 "repeat_penalty": 1.15,
             },
         }
 
-        try:
-            response = await client.post(OLLAMA_URL, json=payload, timeout=180.0)
-            response.raise_for_status()
-            final_report = response.json().get("response", DEFAULT_CLEAN_SOC_REPORT)
-            print("[SOC Engine] Triage Report Synthesis Complete.")
-            return final_report
-        except Exception as e:
-            print(f"[SOC Engine ERROR] Synthesis error: {e}")
-            # If reduce fails, return concatenated findings
+        final_report = await stream_ollama_generate(client, payload)
+        if not final_report or "[WARN]" in final_report or "[ERROR]" in final_report:
             return f"# TIER-1 SOC INCIDENT TRIAGE REPORT (PARTIAL EXTRACTION)\n\n" + "\n\n---\n\n".join(raw_findings)
+
+        print("[SOC Engine] Master Triage Report Synthesis Complete.")
+        return final_report

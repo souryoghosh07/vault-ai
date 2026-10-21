@@ -69,6 +69,8 @@ export default function App() {
   const [modelStatus, setModelStatus] = useState<string>("Connecting to SOC Engine...");
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [isReady, setIsReady] = useState<boolean>(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("granite4.1:8b");
 
   // --- APP STATES ---
   const [activeProfile, setActiveProfile] = useState<ThreatProfile>('cisco_ise');
@@ -101,9 +103,18 @@ export default function App() {
         const tagsResponse = await fetch("http://127.0.0.1:11434/api/tags");
         if (tagsResponse.ok) {
           const tagsData = await tagsResponse.json();
-          const hasModel = tagsData.models?.some((m: any) => m.name === "granite4.1:8b");
+          const models: string[] = tagsData.models?.map((m: any) => m.name) || [];
 
-          if (hasModel) {
+          if (models.length > 0) {
+            if (isMounted) {
+              setAvailableModels(models);
+              setSelectedModel(prev => {
+                if (prev && models.includes(prev)) return prev;
+                if (models.includes("granite4.1:8b")) return "granite4.1:8b";
+                if (models.includes("llama3.2:3b")) return "llama3.2:3b";
+                return models[0];
+              });
+            }
             ollamaOk = true;
           } else {
             if (isMounted) setModelStatus("Downloading Granite 4.1 Model (First Boot Only)...");
@@ -217,6 +228,9 @@ export default function App() {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("threat_profile", activeProfile);
+    if (selectedModel) {
+      formData.append("model_name", selectedModel);
+    }
 
     try {
       const response = await fetch("http://127.0.0.1:8000/api/soc/analyze", {
@@ -423,6 +437,27 @@ export default function App() {
             )}
           </div>
 
+          {/* LOCAL INFERENCE MODEL SELECTOR */}
+          <div style={styles.panel}>
+            <div style={styles.panelTitle}>Local Inference Model</div>
+            {availableModels.length > 0 ? (
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={isScanning}
+                style={styles.modelSelect}
+              >
+                {availableModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m} {m.includes('3.2') || m.includes('3b') ? '⚡ (Fast CPU)' : m.includes('granite') ? '🛡️ (SOC Default)' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div style={styles.modelSelectPlaceholder}>Detecting local Ollama models...</div>
+            )}
+          </div>
+
           {/* THREAT PROFILE SELECTOR */}
           <div style={styles.panel}>
             <div style={styles.panelTitle}>Active Threat Profile</div>
@@ -597,6 +632,23 @@ const styles: { [key: string]: React.CSSProperties } = {
   progressBar: { height: '100%', backgroundColor: '#10B981', transition: 'width 0.3s ease' },
   panel: { backgroundColor: '#1E293B', border: '1px solid #334155', borderRadius: '8px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' },
   panelTitle: { fontSize: '0.8rem', fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' },
+  modelSelect: {
+    width: '100%',
+    padding: '8px 10px',
+    backgroundColor: '#0F172A',
+    color: '#F8FAFC',
+    border: '1px solid #334155',
+    borderRadius: '6px',
+    fontSize: '0.8rem',
+    outline: 'none',
+    cursor: 'pointer',
+    fontWeight: 500
+  },
+  modelSelectPlaceholder: {
+    fontSize: '0.75rem',
+    color: '#94A3B8',
+    fontStyle: 'italic'
+  },
   profileSelectGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
   activeProfileButton: { backgroundColor: '#3B82F6', color: '#FFFFFF', border: 'none', borderRadius: '6px', padding: '10px 12px', cursor: 'pointer', textAlign: 'left', fontWeight: 600, fontSize: '0.8rem' },
   inactiveProfileButton: { backgroundColor: '#0F172A', color: '#94A3B8', border: '1px solid #334155', borderRadius: '6px', padding: '10px 12px', cursor: 'pointer', textAlign: 'left', fontWeight: 500, fontSize: '0.8rem' },
