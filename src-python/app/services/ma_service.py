@@ -2,6 +2,8 @@ import httpx
 import asyncio
 import io
 
+from collections import defaultdict
+
 # Docling Imports
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat, DocumentStream
@@ -34,14 +36,12 @@ def get_page_chunks(pdf_bytes: bytes, filename: str) -> list:
     result = converter.convert(stream)
     
     # 3. Iterate through all document elements and group them by page number
-    pages_content = {}
+    pages_content = defaultdict(str)
     for item, _ in result.document.iterate_items():
         if not item.prov:
             continue
             
         page_no = item.prov[0].page_no
-        if page_no not in pages_content:
-            pages_content[page_no] = ""
         
         # Export tables nicely formatted, fallback to raw text for paragraphs
         try:
@@ -57,10 +57,7 @@ def get_page_chunks(pdf_bytes: bytes, filename: str) -> list:
     chunks = []
     for i in range(0, len(pages), max(1, CHUNK_SIZE - OVERLAP)):
         chunk_pages = pages[i:i + CHUNK_SIZE]
-        chunk_text = ""
-        for item in chunk_pages:
-            chunk_text += f"\n--- [PAGE {item['page']}] ---\n{item['content']}"
-        chunks.append(chunk_text)
+        chunks.append("".join(f"\n--- [PAGE {item['page']}] ---\n{item['content']}" for item in chunk_pages))
         
         if i + CHUNK_SIZE >= len(pages):
             break

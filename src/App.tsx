@@ -14,7 +14,6 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [report, setReport] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [scanSteps, setScanSteps] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- EFFECT: INITIALIZE ENGINE ---
@@ -77,7 +76,6 @@ export default function App() {
       setFile(e.target.files[0]);
       setReport(null);
       setError(null);
-      setScanSteps([]);
     }
   };
 
@@ -104,40 +102,6 @@ export default function App() {
     window.print();
   };
 
-  // --- EFFECT: SCANNING ANIMATION ---
-  useEffect(() => {
-    if (isScanning) {
-      setScanSteps(["[SYSTEM] Initializing air-gapped environment..."]);
-      
-      const maSteps = [
-        "[SCAN] Cross-referencing Change of Control triggers...",
-        "[SCAN] Evaluating termination penalties & notice periods...",
-        "[SCAN] Synthesizing narrative risk factors (CIM)..."
-      ];
-
-      const pitchSteps = [
-        "[SCAN] Evaluating problem statement & market claims...",
-        "[SCAN] Auditing competitive moat & IP...",
-        "[SCAN] Extracting financials, GTM metrics & use of funds..."
-      ];
-
-      const dynamicSteps = isPitchDeck ? pitchSteps : maSteps;
-
-      const timers = [
-        setTimeout(() => setScanSteps(prev => [...prev, "[INGEST] Extracting raw text layers from PDF..."]), 1500),
-        setTimeout(() => setScanSteps(prev => [...prev, "[ENGINE] Allocating local memory for model execution..."]), 3500),
-        setTimeout(() => setScanSteps(prev => [...prev, dynamicSteps[0]]), 6500),
-        setTimeout(() => setScanSteps(prev => [...prev, dynamicSteps[1]]), 11000),
-        setTimeout(() => setScanSteps(prev => [...prev, dynamicSteps[2]]), 16000),
-        setTimeout(() => setScanSteps(prev => [...prev, "[ENGINE] Awaiting final JSON payload from local model..."]), 22000),
-      ];
-
-      return () => timers.forEach(clearTimeout);
-    } else {
-      setScanSteps([]);
-    }
-  }, [isScanning, isPitchDeck]);
-
   const runDeterministicScan = async () => {
     if (!file) {
       setError("Please upload a target document first.");
@@ -151,7 +115,6 @@ export default function App() {
     const formData = new FormData();
     formData.append("file", file);
 
-    // Dynamically route to the correct FastAPI endpoint
     const endpoint = isPitchDeck ? "/api/pitch/parse" : "/api/ma/parse";
 
     try {
@@ -356,15 +319,7 @@ export default function App() {
               <div className="no-print" style={styles.processingState}>
                 <div style={styles.processingHeader}>
                   <div style={styles.loadingSpinner}></div>
-                  <span style={styles.processingTitle}>Engine Active</span>
-                </div>
-                <div style={styles.logTerminal}>
-                  {scanSteps.map((step, idx) => (
-                    <div key={idx} style={styles.logLine}>
-                      <span style={styles.timestamp}>{new Date().toLocaleTimeString()}</span> {step}
-                    </div>
-                  ))}
-                  <div style={styles.blinkingCursor}>_</div>
+                  <span style={styles.processingTitle}>Engine Active — Auditing {file?.name || 'document'}...</span>
                 </div>
               </div>
             )}
@@ -412,12 +367,9 @@ const styles: { [key: string]: React.CSSProperties } = {
   progressBar: { height: '100%', backgroundColor: '#059669', transition: 'width 0.3s ease' },
   panel: { backgroundColor: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', boxShadow: '0 1px 2px rgba(0,0,0,0.02)' },
   panelTitle: { fontSize: '0.875rem', fontWeight: 600, color: '#111827', borderBottom: '1px solid #F3F4F6', paddingBottom: '8px' },
-  
-  // NEW TOGGLE STYLES
   toggleContainer: { display: 'flex', backgroundColor: '#F3F4F6', borderRadius: '6px', padding: '4px', gap: '4px' },
   activeToggle: { flex: 1, backgroundColor: '#FFFFFF', color: '#111827', border: 'none', borderRadius: '4px', padding: '6px 0', fontSize: '0.8rem', fontWeight: 600, boxShadow: '0 1px 2px rgba(0,0,0,0.1)', cursor: 'default' },
   inactiveToggle: { flex: 1, backgroundColor: 'transparent', color: '#6B7280', border: 'none', borderRadius: '4px', padding: '6px 0', fontSize: '0.8rem', fontWeight: 500, cursor: 'pointer', transition: 'color 0.2s' },
-  
   uploadButton: { backgroundColor: '#FFFFFF', color: '#374151', border: '1px dashed #D1D5DB', padding: '12px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, fontSize: '0.875rem', borderRadius: '6px' },
   fileStatus: { fontSize: '0.8rem', color: '#6B7280', backgroundColor: '#F9FAFB', padding: '8px', borderRadius: '4px', border: '1px solid #F3F4F6' },
   fileName: { fontFamily: '"SFMono-Regular", Consolas, monospace', color: '#111827', fontWeight: 500 },
@@ -437,10 +389,6 @@ const styles: { [key: string]: React.CSSProperties } = {
   processingHeader: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' },
   loadingSpinner: { width: '20px', height: '20px', border: '2px solid #E5E7EB', borderTop: '2px solid #0F172A', borderRadius: '50%', animation: 'spin 1s linear infinite' },
   processingTitle: { fontSize: '1rem', fontWeight: 600, color: '#111827' },
-  logTerminal: { backgroundColor: '#111827', borderRadius: '6px', padding: '16px', fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Courier, monospace', fontSize: '0.85rem', color: '#A7F3D0', minHeight: '200px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)' },
-  logLine: { marginBottom: '8px', lineHeight: '1.4' },
-  timestamp: { color: '#6B7280', marginRight: '8px' },
-  blinkingCursor: { display: 'inline-block', animation: 'blink 1s step-end infinite', color: '#A7F3D0' },
   errorText: { color: '#DC2626', fontSize: '0.8rem', marginTop: '4px', backgroundColor: '#FEF2F2', padding: '8px', borderRadius: '4px', border: '1px solid #FCA5A5' },
   renderedReport: { lineHeight: '1.6', color: '#374151', fontSize: '0.95rem' },
   h1: { color: '#111827', fontSize: '1.5rem', fontWeight: 700, borderBottom: '2px solid #E5E7EB', paddingBottom: '8px', marginBottom: '24px', marginTop: 0 },

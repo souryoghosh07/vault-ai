@@ -31,11 +31,13 @@ Format every finding strictly in Markdown as follows. Do not add bolding to the 
 * **Regulatory/Compliance Liabilities:** [Strictly factual summary of the clause's mechanics. No commentary.] | **Citation:** [Section/Clause X, Page Y or "Not found in document"]
 """
 
-MA_SYNTHESIS_RULES = """1. If a category has a specific risk or fact identified in ANY chunk, include it and drop the "Not found" entry.
+SYNTHESIS_RULES = """1. If a category has a specific risk or fact identified in ANY chunk, include it and drop the "Not found" entry.
 2. Combine duplicate findings into a single bullet point.
 3. If a category has no findings across ALL chunks, output EXACTLY: `* **[Category Name]:** Not found in document | **Citation:** Not found`
 4. If a page number is missing from the raw text, cite the Section number only. Do NOT output placeholders like "Page Y" or "assuming page reference".
 5. CRITICAL: Output ONLY the Markdown report. Do NOT output any introductory text, concluding remarks, or "Notes" of any kind."""
+
+MA_SYNTHESIS_RULES = SYNTHESIS_RULES
 
 DEFAULT_CLEAN_REPORT = """# M&A TARGET AUDIT: RED FLAG REPORT
 
