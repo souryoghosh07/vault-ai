@@ -1,4 +1,6 @@
+#[allow(unused_imports)]
 use tauri_plugin_shell::ShellExt;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -7,14 +9,26 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // 1. Boot embedded Ollama engine
-            if let Ok(ollama_command) = app.shell().sidecar("ollama") {
-                let _ = ollama_command.args(["serve"]).spawn(); 
+            #[cfg(debug_assertions)]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.open_devtools();
+                }
             }
 
-            // 2. Boot compiled Python FastAPI backend
-            if let Ok(api_command) = app.shell().sidecar("vault-api") {
-                let _ = api_command.spawn();
+            // In production release builds, boot the embedded sidecars.
+            // In dev mode, scripts/dev.js handles running the Python API concurrently with Vite.
+            #[cfg(not(debug_assertions))]
+            {
+                // 1. Boot embedded Ollama engine
+                if let Ok(ollama_command) = app.shell().sidecar("ollama") {
+                    let _ = ollama_command.args(["serve"]).spawn(); 
+                }
+
+                // 2. Boot compiled Python FastAPI backend
+                if let Ok(api_command) = app.shell().sidecar("vault-api") {
+                    let _ = api_command.spawn();
+                }
             }
 
             Ok(())

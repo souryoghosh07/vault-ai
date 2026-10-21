@@ -66,9 +66,11 @@ const THREAT_PROFILES: ProfileMeta[] = [
 
 export default function App() {
   // --- ENGINE STATUS STATES ---
-  const [modelStatus, setModelStatus] = useState<string>("Initializing SOC AI engine...");
+  const [modelStatus, setModelStatus] = useState<string>("Connecting to SOC Engine...");
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [isReady, setIsReady] = useState<boolean>(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("granite4.1:8b");
 
   // --- APP STATES ---
   const [activeProfile, setActiveProfile] = useState<ThreatProfile>('cisco_ise');
@@ -78,55 +80,99 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- EFFECT: INITIALIZE ENGINE ---
+  // --- EFFECT: INITIALIZE & POLL ENGINES ---
   useEffect(() => {
-    const initializeEngine = async () => {
+    let isMounted = true;
+
+    const checkHealth = async () => {
+      let apiOk = false;
+      let ollamaOk = false;
+
+      // 1. Check Python SOC API on port 8000
+      try {
+        const apiRes = await fetch("http://127.0.0.1:8000/health");
+        if (apiRes.ok) {
+          apiOk = true;
+        }
+      } catch (_) {
+        apiOk = false;
+      }
+
+      // 2. Check Ollama on port 11434
       try {
         const tagsResponse = await fetch("http://127.0.0.1:11434/api/tags");
-        const tagsData = await tagsResponse.json();
-        const hasModel = tagsData.models?.some((m: any) => m.name === "granite4.1:8b");
+        if (tagsResponse.ok) {
+          const tagsData = await tagsResponse.json();
+          const models: string[] = tagsData.models?.map((m: any) => m.name) || [];
 
-        if (hasModel) {
-          setModelStatus("SOC Engine Online (Air-Gapped)");
-          setIsReady(true);
-          return;
-        }
-
-        setModelStatus("Downloading Granite 4.1 Model (First Boot Only)...");
-
-        const pullResponse = await fetch("http://127.0.0.1:11434/api/pull", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: "granite4.1:8b" })
-        });
-
-        const reader = pullResponse.body?.getReader();
-        if (!reader) return;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = new TextDecoder().decode(value);
-          const lines = chunk.split("\n").filter(Boolean);
-
-          for (const line of lines) {
-            const json = JSON.parse(line);
-            if (json.total && json.completed) {
-              const percentage = Math.round((json.completed / json.total) * 100);
-              setDownloadProgress(percentage);
+          if (models.length > 0) {
+            if (isMounted) {
+              setAvailableModels(models);
+              setSelectedModel(prev => {
+                if (prev && models.includes(prev)) return prev;
+                if (models.includes("granite4.1:8b")) return "granite4.1:8b";
+                if (models.includes("llama3.2:3b")) return "llama3.2:3b";
+                return models[0];
+              });
             }
+            ollamaOk = true;
+          } else {
+            if (isMounted) setModelStatus("Downloading Granite 4.1 Model (First Boot Only)...");
+            try {
+              const pullResponse = await fetch("http://127.0.0.1:11434/api/pull", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: "granite4.1:8b" })
+              });
+              const reader = pullResponse.body?.getReader();
+              if (reader) {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  const chunk = new TextDecoder().decode(value);
+                  const lines = chunk.split("\n").filter(Boolean);
+                  for (const line of lines) {
+                    try {
+                      const json = JSON.parse(line);
+                      if (json.total && json.completed) {
+                        const percentage = Math.round((json.completed / json.total) * 100);
+                        if (isMounted) setDownloadProgress(percentage);
+                      }
+                    } catch (_) {}
+                  }
+                }
+                ollamaOk = true;
+              }
+            } catch (_) {}
           }
         }
+      } catch (_) {
+        ollamaOk = false;
+      }
 
-        setModelStatus("SOC Engine Online (Air-Gapped)");
+      if (!isMounted) return;
+
+      if (apiOk && ollamaOk) {
+        setModelStatus("SOC Engine & Ollama Online (Air-Gapped)");
         setIsReady(true);
-      } catch (err) {
-        setModelStatus("Engine initialization failed. Retrying...");
+      } else if (apiOk && !ollamaOk) {
+        setModelStatus("SOC Engine Online | Awaiting Ollama (Port 11434)...");
+        setIsReady(true);
+      } else if (!apiOk && ollamaOk) {
+        setModelStatus("Ollama Online | Awaiting SOC API (Port 8000)...");
+        setIsReady(false);
+      } else {
+        setModelStatus("Connecting to Local Engines (Ports 8000 & 11434)...");
+        setIsReady(false);
       }
     };
 
-    initializeEngine();
+    checkHealth();
+    const interval = setInterval(checkHealth, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -182,6 +228,9 @@ export default function App() {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("threat_profile", activeProfile);
+    if (selectedModel) {
+      formData.append("model_name", selectedModel);
+    }
 
     try {
       const response = await fetch("http://127.0.0.1:8000/api/soc/analyze", {
@@ -197,7 +246,11 @@ export default function App() {
       const data = await response.json();
       setReport(data.report_markdown);
     } catch (err: any) {
-      setError(err.message || "Failed to communicate with local SOC engine.");
+      if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError") || err.message?.includes("Load failed")) {
+        setError("Cannot connect to Python SOC Engine on http://127.0.0.1:8000. Ensure the backend is running via 'npm run dev' or 'python run_api.py'.");
+      } else {
+        setError(err.message || "Failed to communicate with local SOC engine.");
+      }
     } finally {
       setIsScanning(false);
     }
@@ -384,6 +437,27 @@ export default function App() {
             )}
           </div>
 
+          {/* LOCAL INFERENCE MODEL SELECTOR */}
+          <div style={styles.panel}>
+            <div style={styles.panelTitle}>Local Inference Model</div>
+            {availableModels.length > 0 ? (
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={isScanning}
+                style={styles.modelSelect}
+              >
+                {availableModels.map((m) => (
+                  <option key={m} value={m}>
+                    {m} {m.includes('3.2') || m.includes('3b') ? '⚡ (Fast CPU)' : m.includes('granite') ? '🛡️ (SOC Default)' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div style={styles.modelSelectPlaceholder}>Detecting local Ollama models...</div>
+            )}
+          </div>
+
           {/* THREAT PROFILE SELECTOR */}
           <div style={styles.panel}>
             <div style={styles.panelTitle}>Active Threat Profile</div>
@@ -558,6 +632,23 @@ const styles: { [key: string]: React.CSSProperties } = {
   progressBar: { height: '100%', backgroundColor: '#10B981', transition: 'width 0.3s ease' },
   panel: { backgroundColor: '#1E293B', border: '1px solid #334155', borderRadius: '8px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' },
   panelTitle: { fontSize: '0.8rem', fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' },
+  modelSelect: {
+    width: '100%',
+    padding: '8px 10px',
+    backgroundColor: '#0F172A',
+    color: '#F8FAFC',
+    border: '1px solid #334155',
+    borderRadius: '6px',
+    fontSize: '0.8rem',
+    outline: 'none',
+    cursor: 'pointer',
+    fontWeight: 500
+  },
+  modelSelectPlaceholder: {
+    fontSize: '0.75rem',
+    color: '#94A3B8',
+    fontStyle: 'italic'
+  },
   profileSelectGroup: { display: 'flex', flexDirection: 'column', gap: '6px' },
   activeProfileButton: { backgroundColor: '#3B82F6', color: '#FFFFFF', border: 'none', borderRadius: '6px', padding: '10px 12px', cursor: 'pointer', textAlign: 'left', fontWeight: 600, fontSize: '0.8rem' },
   inactiveProfileButton: { backgroundColor: '#0F172A', color: '#94A3B8', border: '1px solid #334155', borderRadius: '6px', padding: '10px 12px', cursor: 'pointer', textAlign: 'left', fontWeight: 500, fontSize: '0.8rem' },

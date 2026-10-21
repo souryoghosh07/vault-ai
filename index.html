@@ -4,10 +4,55 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <title>Vault AI // Tier-1 SOC Workbench</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background-color: #0F172A;
+        color: #F8FAFC;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        overflow: hidden;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+      }
+      #critical-error-banner {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #0F172A;
+        color: #EF4444;
+        padding: 32px;
+        z-index: 999999;
+        overflow: auto;
+      }
+    </style>
+    <script>
+      function showError(title, msg) {
+        var el = document.getElementById('critical-error-banner');
+        if (el) {
+          el.style.display = 'block';
+          el.innerHTML = '<h2 style="color:#EF4444;margin-top:0;">' + title + '</h2><pre style="background:#1E293B;padding:16px;border-radius:6px;color:#FCA5A5;white-space:pre-wrap;">' + msg + '</pre>';
+        }
+      }
+      window.addEventListener('error', function(e) {
+        showError('Runtime JavaScript Error', e.error ? (e.error.stack || e.error.message) : e.message);
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        showError('Unhandled Promise Rejection', e.reason ? (e.reason.stack || e.reason) : 'Unknown Promise Error');
+      });
+    </script>
   </head>
 
   <body>
+    <div id="critical-error-banner"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

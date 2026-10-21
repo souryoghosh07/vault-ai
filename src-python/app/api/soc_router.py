@@ -1,7 +1,7 @@
 import traceback
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Optional
 from app.services.soc_service import process_security_incident
 
 router = APIRouter()
@@ -90,6 +90,7 @@ async def list_threat_profiles():
 async def analyze_security_artifact(
     file: UploadFile = File(...),
     threat_profile: str = Form("cisco_ise"),
+    model_name: Optional[str] = Form(None),
 ):
     """Ingests a security artifact (.evtx, .pcap, .log, .pdf, etc.) and performs deterministic Tier-1 SOC triage."""
     filename = file.filename or "unknown_artifact"
@@ -110,6 +111,7 @@ async def analyze_security_artifact(
             file_bytes=contents,
             filename=filename,
             threat_profile=threat_profile,
+            model_name=model_name,
         )
 
         return SOCReport(
