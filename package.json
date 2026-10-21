@@ -4,7 +4,9 @@
   "version": "1.2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.js",
+    "vite": "vite",
+    "api": "python run_api.py",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"

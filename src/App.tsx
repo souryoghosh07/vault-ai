@@ -66,7 +66,7 @@ const THREAT_PROFILES: ProfileMeta[] = [
 
 export default function App() {
   // --- ENGINE STATUS STATES ---
-  const [modelStatus, setModelStatus] = useState<string>("Initializing SOC AI engine...");
+  const [modelStatus, setModelStatus] = useState<string>("Connecting to SOC Engine...");
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [isReady, setIsReady] = useState<boolean>(false);
 
@@ -78,55 +78,90 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- EFFECT: INITIALIZE ENGINE ---
+  // --- EFFECT: INITIALIZE & POLL ENGINES ---
   useEffect(() => {
-    const initializeEngine = async () => {
+    let isMounted = true;
+
+    const checkHealth = async () => {
+      let apiOk = false;
+      let ollamaOk = false;
+
+      // 1. Check Python SOC API on port 8000
+      try {
+        const apiRes = await fetch("http://127.0.0.1:8000/health");
+        if (apiRes.ok) {
+          apiOk = true;
+        }
+      } catch (_) {
+        apiOk = false;
+      }
+
+      // 2. Check Ollama on port 11434
       try {
         const tagsResponse = await fetch("http://127.0.0.1:11434/api/tags");
-        const tagsData = await tagsResponse.json();
-        const hasModel = tagsData.models?.some((m: any) => m.name === "granite4.1:8b");
+        if (tagsResponse.ok) {
+          const tagsData = await tagsResponse.json();
+          const hasModel = tagsData.models?.some((m: any) => m.name === "granite4.1:8b");
 
-        if (hasModel) {
-          setModelStatus("SOC Engine Online (Air-Gapped)");
-          setIsReady(true);
-          return;
-        }
-
-        setModelStatus("Downloading Granite 4.1 Model (First Boot Only)...");
-
-        const pullResponse = await fetch("http://127.0.0.1:11434/api/pull", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: "granite4.1:8b" })
-        });
-
-        const reader = pullResponse.body?.getReader();
-        if (!reader) return;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = new TextDecoder().decode(value);
-          const lines = chunk.split("\n").filter(Boolean);
-
-          for (const line of lines) {
-            const json = JSON.parse(line);
-            if (json.total && json.completed) {
-              const percentage = Math.round((json.completed / json.total) * 100);
-              setDownloadProgress(percentage);
-            }
+          if (hasModel) {
+            ollamaOk = true;
+          } else {
+            if (isMounted) setModelStatus("Downloading Granite 4.1 Model (First Boot Only)...");
+            try {
+              const pullResponse = await fetch("http://127.0.0.1:11434/api/pull", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: "granite4.1:8b" })
+              });
+              const reader = pullResponse.body?.getReader();
+              if (reader) {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  const chunk = new TextDecoder().decode(value);
+                  const lines = chunk.split("\n").filter(Boolean);
+                  for (const line of lines) {
+                    try {
+                      const json = JSON.parse(line);
+                      if (json.total && json.completed) {
+                        const percentage = Math.round((json.completed / json.total) * 100);
+                        if (isMounted) setDownloadProgress(percentage);
+                      }
+                    } catch (_) {}
+                  }
+                }
+                ollamaOk = true;
+              }
+            } catch (_) {}
           }
         }
+      } catch (_) {
+        ollamaOk = false;
+      }
 
-        setModelStatus("SOC Engine Online (Air-Gapped)");
+      if (!isMounted) return;
+
+      if (apiOk && ollamaOk) {
+        setModelStatus("SOC Engine & Ollama Online (Air-Gapped)");
         setIsReady(true);
-      } catch (err) {
-        setModelStatus("Engine initialization failed. Retrying...");
+      } else if (apiOk && !ollamaOk) {
+        setModelStatus("SOC Engine Online | Awaiting Ollama (Port 11434)...");
+        setIsReady(true);
+      } else if (!apiOk && ollamaOk) {
+        setModelStatus("Ollama Online | Awaiting SOC API (Port 8000)...");
+        setIsReady(false);
+      } else {
+        setModelStatus("Connecting to Local Engines (Ports 8000 & 11434)...");
+        setIsReady(false);
       }
     };
 
-    initializeEngine();
+    checkHealth();
+    const interval = setInterval(checkHealth, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -197,7 +232,11 @@ export default function App() {
       const data = await response.json();
       setReport(data.report_markdown);
     } catch (err: any) {
-      setError(err.message || "Failed to communicate with local SOC engine.");
+      if (err.message?.includes("Failed to fetch") || err.message?.includes("NetworkError") || err.message?.includes("Load failed")) {
+        setError("Cannot connect to Python SOC Engine on http://127.0.0.1:8000. Ensure the backend is running via 'npm run dev' or 'python run_api.py'.");
+      } else {
+        setError(err.message || "Failed to communicate with local SOC engine.");
+      }
     } finally {
       setIsScanning(false);
     }
