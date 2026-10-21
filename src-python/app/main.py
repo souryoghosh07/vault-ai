@@ -10,11 +10,12 @@ if getattr(sys, 'frozen', False):
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.ma_router import router as ma_router
+from app.api.soc_router import router as soc_router
 
 app = FastAPI(
-    title="VaultAI Engine",
-    description="Air-Gapped Offline M&A Risk Extraction & Compliance Engine"
+    title="Vault AI SOC Engine",
+    description="Air-Gapped Tier-1 SOC Incident Triage & Forensic Log Analysis",
+    version="1.0.0",
 )
 
 # Enable CORS for local Tauri development
@@ -26,9 +27,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register M&A Router
-app.include_router(ma_router)
+# Register SOC Incident Triage Router
+app.include_router(soc_router)
+
 
 @app.get("/health")
 def health_check():
-    return {"status": "online", "mode": "air-gapped", "engine": "M&A Risk Extractor"}
+    return {
+        "status": "online",
+        "mode": "air-gapped",
+        "engine": "Tier-1 SOC Incident Triage",
+        "primary_threat": "Cisco ISE Auth Bypass (CVE-2026-76460)",
+    }
