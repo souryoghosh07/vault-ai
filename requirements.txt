@@ -4,3 +4,5 @@ uvicorn
 python-multipart
 docling
 onnxruntime
+python-evtx
+dpkt
