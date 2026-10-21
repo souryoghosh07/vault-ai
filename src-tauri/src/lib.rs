@@ -1,4 +1,5 @@
 use tauri_plugin_shell::ShellExt;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -7,6 +8,13 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            #[cfg(debug_assertions)]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.open_devtools();
+                }
+            }
+
             // 1. Boot embedded Ollama engine
             if let Ok(ollama_command) = app.shell().sidecar("ollama") {
                 let _ = ollama_command.args(["serve"]).spawn(); 
