@@ -89,6 +89,9 @@ async def stream_ollama_generate(
         return f"[ERROR]: Engine communication error: {e}"
 
 
+DEPRECATED_MODELS = {"llama3.1", "glm-ocr", "moondream", "granite4.1"}
+
+
 async def get_active_model(client: httpx.AsyncClient, requested_model: Optional[str] = None) -> str:
     """Validates the requested model or resolves to the best available installed model."""
     try:
@@ -97,23 +100,29 @@ async def get_active_model(client: httpx.AsyncClient, requested_model: Optional[
             models_data = res.json().get("models", [])
             installed_names = [m.get("name", "") for m in models_data]
 
-            # 1. Match requested model if provided
-            if requested_model and any(requested_model in name for name in installed_names):
+            # Filter out deprecated models
+            valid_installed = [
+                name for name in installed_names
+                if not any(dep in name.lower() for dep in DEPRECATED_MODELS)
+            ]
+
+            # 1. Match requested model if provided and valid
+            if requested_model and any(requested_model in name for name in valid_installed):
                 return requested_model
 
-            # 2. Priority order for SOC triage
-            for preferred in ["granite4.1:8b", "llama3.2:3b", "llama3.1:8b"]:
-                for name in installed_names:
+            # 2. Priority order for SOC triage: SmolLM2 1.7B default
+            for preferred in ["smollm2:1.7b", "smollm2", "llama3.2:3b"]:
+                for name in valid_installed:
                     if preferred in name:
                         return name
 
-            # 3. Fallback to first available model
-            if installed_names:
-                return installed_names[0]
+            # 3. Fallback to first valid model
+            if valid_installed:
+                return valid_installed[0]
     except Exception:
         pass
 
-    return requested_model or "granite4.1:8b"
+    return requested_model or "smollm2:1.7b"
 
 
 async def process_security_incident(
