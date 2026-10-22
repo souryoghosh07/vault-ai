@@ -64,13 +64,15 @@ const THREAT_PROFILES: ProfileMeta[] = [
   }
 ];
 
+const DISALLOWED_MODELS = ['llama3.1', 'glm-ocr', 'moondream', 'granite4.1', 'granite'];
+
 export default function App() {
   // --- ENGINE STATUS STATES ---
   const [modelStatus, setModelStatus] = useState<string>("Connecting to SOC Engine...");
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [isReady, setIsReady] = useState<boolean>(false);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>("granite4.1:8b");
+  const [selectedModel, setSelectedModel] = useState<string>("smollm2:1.7b");
 
   // --- APP STATES ---
   const [activeProfile, setActiveProfile] = useState<ThreatProfile>('cisco_ise');
@@ -103,26 +105,29 @@ export default function App() {
         const tagsResponse = await fetch("http://127.0.0.1:11434/api/tags");
         if (tagsResponse.ok) {
           const tagsData = await tagsResponse.json();
-          const models: string[] = tagsData.models?.map((m: any) => m.name) || [];
+          const allModels: string[] = tagsData.models?.map((m: any) => m.name) || [];
+          const validModels = allModels.filter(m =>
+            !DISALLOWED_MODELS.some(dis => m.toLowerCase().includes(dis.toLowerCase()))
+          );
 
-          if (models.length > 0) {
+          if (validModels.length > 0) {
             if (isMounted) {
-              setAvailableModels(models);
+              setAvailableModels(validModels);
               setSelectedModel(prev => {
-                if (prev && models.includes(prev)) return prev;
-                if (models.includes("granite4.1:8b")) return "granite4.1:8b";
-                if (models.includes("llama3.2:3b")) return "llama3.2:3b";
-                return models[0];
+                if (prev && validModels.includes(prev)) return prev;
+                if (validModels.some(m => m.includes("smollm2"))) return validModels.find(m => m.includes("smollm2"))!;
+                if (validModels.some(m => m.includes("3.2"))) return validModels.find(m => m.includes("3.2"))!;
+                return validModels[0];
               });
             }
             ollamaOk = true;
           } else {
-            if (isMounted) setModelStatus("Downloading Granite 4.1 Model (First Boot Only)...");
+            if (isMounted) setModelStatus("Downloading SmolLM2 1.7B Model (First Boot Only)...");
             try {
               const pullResponse = await fetch("http://127.0.0.1:11434/api/pull", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name: "granite4.1:8b" })
+                body: JSON.stringify({ name: "smollm2:1.7b" })
               });
               const reader = pullResponse.body?.getReader();
               if (reader) {
@@ -449,7 +454,7 @@ export default function App() {
               >
                 {availableModels.map((m) => (
                   <option key={m} value={m}>
-                    {m} {m.includes('3.2') || m.includes('3b') ? '⚡ (Fast CPU)' : m.includes('granite') ? '🛡️ (SOC Default)' : ''}
+                    {m} {m.includes('smollm2') ? '🛡️ (Default SmolLM2 1.7B)' : m.includes('3.2') || m.includes('3b') ? '⚡ (Fast CPU)' : ''}
                   </option>
                 ))}
               </select>

@@ -32,7 +32,7 @@ Vault AI bypasses the standard cloud-API model in favor of an offline, memory-sa
 
 * **Core Desktop Shell:** Written in **Rust / Tauri v2** to guarantee memory safety, thread-safe concurrent execution, and native OS windowing without Chromium Electron overhead.
 * **Forensic Ingestion Engine:** Native Python parsers (`python-evtx` for binary event logs, `dpkt` for packet captures, and IBM Docling for threat advisory PDFs) with zero cloud dependencies (`HF_HUB_OFFLINE=1`).
-* **Local Inference Pipeline:** Interfaces directly with local Ollama runtimes (`granite4.1:8b`) via local sockets. The system enforces strict anti-hallucination rules requiring exact evidence citations (`[Line X]`, `[Packet #Y]`, `[EVTX Record #Z]`).
+* **Local Inference Pipeline:** Interfaces directly with local Ollama runtimes (`smollm2:1.7b`) via local sockets. The system enforces strict anti-hallucination rules requiring exact evidence citations (`[Line X]`, `[Packet #Y]`, `[EVTX Record #Z]`).
 
 ---
 
@@ -42,7 +42,7 @@ Vault AI bypasses the standard cloud-API model in favor of an offline, memory-sa
 * Rust toolchain (`rustup`, `cargo`)
 * Node.js & npm (v18+)
 * Python 3.11+
-* [Ollama](https://ollama.ai/) running locally on port `11434` with `granite4.1:8b`
+* [Ollama](https://ollama.ai/) running locally on port `11434` with `smollm2:1.7b`
 
 ### Run in Development Mode
 ```bash
