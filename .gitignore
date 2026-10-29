@@ -35,3 +35,15 @@ __pycache__/
 
 # PyInstaller files
 *.spec
+
+# Rust / Tauri build artifacts & binaries
+target/
+src-tauri/target/
+src-tauri/bin/
+
+# Market Research & Swarm Artifacts
+codebase_dump.txt
+active_brief.md
+market_candidates.txt
+telemetry_dump.md
+01_competitor_matrix.md
